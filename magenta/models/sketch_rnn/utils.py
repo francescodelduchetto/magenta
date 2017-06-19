@@ -192,7 +192,8 @@ class DataLoader(object):
                scale_factor=1.0,
                random_scale_factor=0.0,
                augment_stroke_prob=0.0,
-               limit=1000):
+               limit=1000,
+               labels=None):
     self.batch_size = batch_size  # minibatch size
     self.max_seq_length = max_seq_length  # N_max in sketch-rnn paper
     self.scale_factor = scale_factor  # divide data by this factor
@@ -201,6 +202,8 @@ class DataLoader(object):
     self.augment_stroke_prob = augment_stroke_prob  # data augmentation method
     self.start_stroke_token = [0, 0, 1, 0, 0]  # S_0 in sketch-rnn paper
     self.preprocess(strokes)
+    self.labels = labels # FRA: vector of labels for each stroke
+
 
   def preprocess(self, strokes):
     """Remove entries from strokes having > max_seq_length points."""
@@ -267,6 +270,7 @@ class DataLoader(object):
     """Given a list of indices, return the potentially augmented batch."""
     x_batch = []
     seq_len = []
+    y_batch = [] # FRA
     for idx in range(len(indices)):
       i = indices[idx]
       data = self.random_scale(self.strokes[i])
@@ -274,11 +278,12 @@ class DataLoader(object):
       if self.augment_stroke_prob > 0:
         data_copy = augment_strokes(data_copy, self.augment_stroke_prob)
       x_batch.append(data_copy)
-      length = len(data_copy)
+      y_batch.append(self.labels[i])
+      length = len(data_copy) # FRA
       seq_len.append(length)
     seq_len = np.array(seq_len, dtype=int)
     # We return three things: stroke-3 format, stroke-5 format, list of seq_len.
-    return x_batch, self.pad_batch(x_batch, self.max_seq_length), seq_len
+    return x_batch, self.pad_batch(x_batch, self.max_seq_length), seq_len, y_batch
 
   def random_batch(self):
     """Return a randomised portion of the training data."""

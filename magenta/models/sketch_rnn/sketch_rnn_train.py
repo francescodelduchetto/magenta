@@ -128,7 +128,12 @@ def load_dataset(data_dir, model_params, inference_mode=False):
   train_strokes = None
   valid_strokes = None
   test_strokes = None
+  train_labels = []
+  valid_labels = []
+  test_labels = []
 
+  # FRA: labels seuqeuntial number
+  label = 0
   for dataset in datasets:
     data_filepath = os.path.join(data_dir, dataset)
     if data_dir.startswith('http://') or data_dir.startswith('https://'):
@@ -144,10 +149,17 @@ def load_dataset(data_dir, model_params, inference_mode=False):
       train_strokes = data['train']
       valid_strokes = data['valid']
       test_strokes = data['test']
+      train_labels = np.zeros(len(train_strokes))
+      valid_labels = np.zeros(len(valid_strokes))
+      test_labels = np.zeros(len(test_strokes))
     else:
       train_strokes = np.concatenate((train_strokes, data['train']))
       valid_strokes = np.concatenate((valid_strokes, data['valid']))
       test_strokes = np.concatenate((test_strokes, data['test']))
+      train_labels = np.concatenate((train_labels, np.ones(len(train_strokes)) * label))
+      valid_labels = np.concatenate((train_labels, np.ones(len(valid_strokes)) * label))
+      test_labels = np.concatenate((train_labels, np.ones(len(test_strokes)) * label))
+    label += 1
 
   all_strokes = np.concatenate((train_strokes, valid_strokes, test_strokes))
   num_points = 0
@@ -183,6 +195,7 @@ def load_dataset(data_dir, model_params, inference_mode=False):
   train_set = utils.DataLoader(
       train_strokes,
       model_params.batch_size,
+      labels=train_labels,
       max_seq_length=model_params.max_seq_len,
       random_scale_factor=model_params.random_scale_factor,
       augment_stroke_prob=model_params.augment_stroke_prob)
@@ -193,6 +206,7 @@ def load_dataset(data_dir, model_params, inference_mode=False):
   valid_set = utils.DataLoader(
       valid_strokes,
       eval_model_params.batch_size,
+      labels=valid_labels,
       max_seq_length=eval_model_params.max_seq_len,
       random_scale_factor=0.0,
       augment_stroke_prob=0.0)
@@ -201,6 +215,7 @@ def load_dataset(data_dir, model_params, inference_mode=False):
   test_set = utils.DataLoader(
       test_strokes,
       eval_model_params.batch_size,
+      labels=test_labels,
       max_seq_length=eval_model_params.max_seq_len,
       random_scale_factor=0.0,
       augment_stroke_prob=0.0)
@@ -210,7 +225,7 @@ def load_dataset(data_dir, model_params, inference_mode=False):
 
   result = [
       train_set, valid_set, test_set, model_params, eval_model_params,
-      sample_model_params
+      sample_model_params, train_labels, valid_labels, test_labels
   ]
   return result
 
@@ -221,7 +236,7 @@ def evaluate_model(sess, model, data_set):
   total_r_cost = 0.0
   total_kl_cost = 0.0
   for batch in range(data_set.num_batches):
-    unused_orig_x, x, s = data_set.get_batch(batch)
+    unused_orig_x, x, s, _ = data_set.get_batch(batch)
     feed = {model.input_data: x, model.sequence_lengths: s}
     (cost, r_cost,
      kl_cost) = sess.run([model.cost, model.r_cost, model.kl_cost], feed)
@@ -253,7 +268,7 @@ def save_model(sess, model_save_path, global_step):
 def train(sess, model, eval_model, train_set, valid_set, test_set):
   """Train a sketch-rnn model."""
   # Setup summary writer.
-  summary_writer = tf.summary.FileWriter(FLAGS.log_root)
+  summary_writer = tf.summary.FileWriter(FLAGS.log_root, sess.graph)
 
   # Calculate trainable params.
   t_vars = tf.trainable_variables()
@@ -287,7 +302,7 @@ def train(sess, model, eval_model, train_set, valid_set, test_set):
     curr_kl_weight = (hps.kl_weight - (hps.kl_weight - hps.kl_weight_start) *
                       (hps.kl_decay_rate)**step)
 
-    _, x, s = train_set.random_batch()
+    _, x, s, _ = train_set.random_batch()
     feed = {
         model.input_data: x,
         model.sequence_lengths: s,
@@ -424,8 +439,7 @@ def train(sess, model, eval_model, train_set, valid_set, test_set):
         summary_writer.add_summary(eval_kl_summ, train_step)
         summary_writer.add_summary(eval_time_summ, train_step)
         summary_writer.flush()
-
-
+  
 def trainer(model_params):
   """Train a sketch-rnn model."""
   np.set_printoptions(precision=8, edgeitems=6, linewidth=200, suppress=True)
