@@ -24,6 +24,13 @@ import time
 import urllib
 import zipfile
 
+# libraries required for visualisation:
+from IPython.display import SVG, display
+import svgwrite # conda install -c omnia svgwrite=1.1.6
+import PIL
+from PIL import Image
+import matplotlib.pyplot as plt
+
 # internal imports
 
 import numpy as np
@@ -179,6 +186,7 @@ def load_dataset(data_dir, model_params, inference_mode=False):
   sample_model_params = sketch_rnn_model.copy_hparams(eval_model_params)
   sample_model_params.batch_size = 1  # only sample one at a time
   sample_model_params.max_seq_len = 1  # sample one point at a time
+  sample_model_params.is_training = 0
 
   train_set = utils.DataLoader(
       train_strokes,
@@ -250,8 +258,85 @@ def save_model(sess, model_save_path, global_step):
   saver.save(sess, checkpoint_path, global_step=global_step)
 
 
-def train(sess, model, eval_model, train_set, valid_set, test_set):
+
+
+def train(sess, model, eval_model, sample_model, train_set, valid_set, test_set):
   """Train a sketch-rnn model."""
+  ##### save image
+  # little function that displays vector images and saves them to .svg
+  def draw_strokes(data, factor=0.2, svg_filename = 'svg/sample.svg'):
+	  tf.gfile.MakeDirs(os.path.dirname(svg_filename))
+	  min_x, max_x, min_y, max_y = utils.get_bounds(data, factor)
+	  dims = (50 + max_x - min_x, 50 + max_y - min_y)
+	  dwg = svgwrite.Drawing(svg_filename, size=dims)
+	  dwg.add(dwg.rect(insert=(0, 0), size=dims,fill='white'))
+	  lift_pen = 1
+	  abs_x = 25 - min_x 
+	  abs_y = 25 - min_y
+	  p = "M%s,%s " % (abs_x, abs_y)
+	  command = "m"
+	  for i in xrange(len(data)):
+		  if (lift_pen == 1):
+		    command = "m"
+		  elif (command != "l"):
+		    command = "l"
+		  else:
+		    command = ""
+		  x = float(data[i,0])/factor
+		  y = float(data[i,1])/factor
+		  lift_pen = data[i, 2]
+		  p += command+str(x)+","+str(y)+" "
+	  the_color = "black"
+	  stroke_width = 1
+	  dwg.add(dwg.path(p).stroke(the_color,stroke_width).fill("none"))
+	  dwg.save()
+	  display(SVG(dwg.tostring()))
+
+  # generate a 2D grid of many vector drawings
+  def make_grid_svg(s_list, grid_space=10.0, grid_space_x=16.0):
+	  def get_start_and_end(x):
+		  x = np.array(x)
+		  x = x[:, 0:2]
+		  x_start = x[0]
+		  x_end = x.sum(axis=0)
+		  x = x.cumsum(axis=0)
+		  x_max = x.max(axis=0)
+		  x_min = x.min(axis=0)
+		  center_loc = (x_max+x_min)*0.5
+		  return x_start-center_loc, x_end
+	  x_pos = 0.0
+	  y_pos = 0.0
+	  result = [[x_pos, y_pos, 1]]
+	  for sample in s_list:
+		  s = sample[0]
+		  grid_loc = sample[1]
+		  grid_y = grid_loc[0]*grid_space+grid_space*0.5
+		  grid_x = grid_loc[1]*grid_space_x+grid_space_x*0.5
+		  start_loc, delta_pos = get_start_and_end(s)
+
+		  loc_x = start_loc[0]
+		  loc_y = start_loc[1]
+		  new_x_pos = grid_x+loc_x
+		  new_y_pos = grid_y+loc_y
+		  result.append([new_x_pos-x_pos, new_y_pos-y_pos, 0])
+
+		  result += s.tolist()
+		  result[-1][2] = 1
+		  x_pos = new_x_pos+delta_pos[0]
+		  y_pos = new_y_pos+delta_pos[1]
+	  return np.array(result)
+
+  def decode(z_input=None, draw_mode=True, temperature=0.1, factor=0.2, svg_filename='svg/decode_sample.svg'):
+	  z = None
+	  if z_input is not None:
+			  z = [z_input]
+	  sample_strokes, m = sketch_rnn_model.sample(sess, sample_model, seq_len=eval_model.hps.max_seq_len, temperature=temperature, z=z)
+	  strokes = utils.to_normal_strokes(sample_strokes)
+	  if draw_mode:
+			  draw_strokes(strokes, factor, svg_filename)
+	  return strokes
+  ######
+
   # Setup summary writer.
   summary_writer = tf.summary.FileWriter(FLAGS.log_root)
 
@@ -375,6 +460,23 @@ def train(sess, model, eval_model, train_set, valid_set, test_set):
       summary_writer.add_summary(valid_time_summ, train_step)
       summary_writer.flush()
 
+			
+      ######
+      # randomly unconditionally generate 10 examples
+      N = 10
+      reconstructions = []
+      for i in range(N):
+	      temperature=float(i)/N+0.001
+	      reconstructions.append([decode(temperature=temperature, draw_mode=False), [0, i]])
+	      #print temperature
+
+      stroke_grid = make_grid_svg(reconstructions)
+      filename = 'svg/sample_' + str(step) + '.svg'
+      draw_strokes(stroke_grid, svg_filename=filename)
+      print(filename)
+
+      #####
+
       if valid_cost < best_valid_cost:
         best_valid_cost = valid_cost
 
@@ -442,10 +544,14 @@ def trainer(model_params):
   test_set = datasets[2]
   model_params = datasets[3]
   eval_model_params = datasets[4]
+  sample_model_params = datasets[5]
 
   reset_graph()
   model = sketch_rnn_model.Model(model_params)
   eval_model = sketch_rnn_model.Model(eval_model_params, reuse=True)
+  print(eval_model_params)
+  sample_model = sketch_rnn_model.Model(sample_model_params, reuse=True)
+  print(sample_model_params)
 
   sess = tf.InteractiveSession()
   sess.run(tf.global_variables_initializer())
@@ -459,7 +565,7 @@ def trainer(model_params):
       os.path.join(FLAGS.log_root, 'model_config.json'), 'w') as f:
     json.dump(model_params.values(), f, indent=True)
 
-  train(sess, model, eval_model, train_set, valid_set, test_set)
+  train(sess, model, eval_model, sample_model, train_set, valid_set, test_set)
 
 
 def main(unused_argv):
