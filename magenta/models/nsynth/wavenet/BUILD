@@ -30,7 +30,6 @@ py_library(
     ],
 )
 
-
 py_library(
     name = "h512_bo16",
     srcs = ["h512_bo16.py"],
@@ -67,6 +66,10 @@ py_library(
     name = "configs",
     srcs = [
         "h512_bo16.py",
+    ],
+    visibility = [
+        # internal notebook binary
+        "//magenta/tools/pip:__subpackages__",
     ],
     deps = [
         ":config_library",
