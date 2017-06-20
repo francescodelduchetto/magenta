@@ -63,7 +63,8 @@ def get_default_hparams():
       random_scale_factor=0.15,  # Random scaling data augmention proportion.
       augment_stroke_prob=0.10,  # Point dropping augmentation proportion.
       conditional=True,  # When False, use unconditional decoder-only model.
-      is_training=True  # Is model training? Recommend keeping true.
+      is_training=True,  # Is model training? Recommend keeping true.
+      use_labels=False  # Use also the class labels? (basically CVAE if True)
   )
   return hparams
 
@@ -200,6 +201,10 @@ class Model(object):
     self.input_data = tf.placeholder(
         dtype=tf.float32,
         shape=[self.hps.batch_size, self.hps.max_seq_len + 1, 5])
+    # FRA
+    self.input_labels = tf.placeholder(
+        dtype=tf.int32,
+        shape=[self.hps.batch_size])
 
     # The target/expected vectors of strokes
     self.output_x = self.input_data[:, 1:self.hps.max_seq_len + 1, :]
@@ -231,8 +236,12 @@ class Model(object):
               weight_start=0.001,
               input_size=self.hps.z_size))
     else:  # unconditional, decoder-only generation
-      self.batch_z = tf.zeros(
-          (self.hps.batch_size, self.hps.z_size), dtype=tf.float32)
+      if hps.use_labels:
+        self.batch_z = tf.zeros(
+            (self.hps.batch_size, self.hps.z_size), dtype=tf.float32)
+      else:
+        self.batch_z = self.input_labels
+      
       self.kl_cost = tf.zeros([], dtype=tf.float32)
       actual_input_x = self.input_x
       self.initial_state = cell.zero_state(
