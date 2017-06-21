@@ -236,8 +236,8 @@ def evaluate_model(sess, model, data_set):
   total_r_cost = 0.0
   total_kl_cost = 0.0
   for batch in range(data_set.num_batches):
-    unused_orig_x, x, s, _ = data_set.get_batch(batch)
-    feed = {model.input_data: x, model.sequence_lengths: s}
+    unused_orig_x, x, s, y = data_set.get_batch(batch)
+    feed = {model.input_data: x, model.input_labels: y, model.sequence_lengths: s}
     (cost, r_cost,
      kl_cost) = sess.run([model.cost, model.r_cost, model.kl_cost], feed)
     total_cost += cost

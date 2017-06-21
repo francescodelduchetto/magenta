@@ -203,7 +203,7 @@ class Model(object):
         shape=[self.hps.batch_size, self.hps.max_seq_len + 1, 5])
     # FRA
     self.input_labels = tf.placeholder(
-        dtype=tf.int32,
+        dtype=tf.float32,
         shape=[self.hps.batch_size])
 
     # The target/expected vectors of strokes
@@ -220,23 +220,41 @@ class Model(object):
       eps = tf.random_normal(
           (self.hps.batch_size, self.hps.z_size), 0.0, 1.0, dtype=tf.float32)
       self.batch_z = self.mean + tf.multiply(self.sigma, eps)
+      if self.hps.use_labels:
+        print(self.batch_z.shape, self.input_labels.shape)
+        self.batch_z = tf.concat(
+            [self.batch_z, tf.reshape(self.input_labels, [self.hps.batch_size, 1]) ], 1)
       # KL cost
       self.kl_cost = -0.5 * tf.reduce_mean(
           (1 + self.presig - tf.square(self.mean) - tf.exp(self.presig)))
       self.kl_cost = tf.maximum(self.kl_cost, self.hps.kl_tolerance)
-      pre_tile_y = tf.reshape(self.batch_z,
-                              [self.hps.batch_size, 1, self.hps.z_size])
+      if not self.hps.use_labels:
+        pre_tile_y = tf.reshape(self.batch_z,
+                                [self.hps.batch_size, 1, self.hps.z_size])
+      else: 
+        pre_tile_y = tf.reshape(self.batch_z,
+                                [self.hps.batch_size, 1, self.hps.z_size + 1])
       overlay_x = tf.tile(pre_tile_y, [1, self.hps.max_seq_len, 1])
       actual_input_x = tf.concat([self.input_x, overlay_x], 2)
-      self.initial_state = tf.nn.tanh(
-          rnn.super_linear(
-              self.batch_z,
-              cell.state_size,
-              init_w='gaussian',
-              weight_start=0.001,
-              input_size=self.hps.z_size))
+      
+      if not self.hps.use_labels:
+        self.initial_state = tf.nn.tanh(
+            rnn.super_linear(
+                self.batch_z,
+                cell.state_size,
+                init_w='gaussian',
+                weight_start=0.001,
+                input_size=self.hps.z_size))
+      else:
+        self.initial_state = tf.nn.tanh(
+            rnn.super_linear(
+                self.batch_z,
+                cell.state_size,
+                init_w='gaussian',
+                weight_start=0.001,
+                input_size=self.hps.z_size + 1))
     else:  # unconditional, decoder-only generation
-      if not hps.use_labels:
+      if not self.hps.use_labels:
         self.batch_z = tf.zeros(
             (self.hps.batch_size, self.hps.z_size), dtype=tf.float32)
       else:
@@ -379,7 +397,7 @@ class Model(object):
 
 
 def sample(sess, model, seq_len=250, temperature=1.0, greedy_mode=False,
-           z=None):
+           z=None, label=None):
   """Samples a sequence from a pre-trained model."""
 
   def adjust_temp(pi_pdf, temp):
@@ -416,6 +434,13 @@ def sample(sess, model, seq_len=250, temperature=1.0, greedy_mode=False,
   prev_x[0, 0, 2] = 1  # initially, we want to see beginning of new stroke
   if z is None:
     z = np.random.randn(1, model.hps.z_size)  # not used if unconditional
+    
+  if label is None:
+    label = 0
+  if model.hps.use_labels:
+    label = np.array(label).reshape((1,1))
+    #print(label.shape, z.shape)
+    z = np.concatenate((z, label), axis=1) 
 
   if not model.hps.conditional:
     prev_state = sess.run(model.initial_state)
