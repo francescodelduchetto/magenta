@@ -236,7 +236,7 @@ class Model(object):
               weight_start=0.001,
               input_size=self.hps.z_size))
     else:  # unconditional, decoder-only generation
-      if hps.use_labels:
+      if not hps.use_labels:
         self.batch_z = tf.zeros(
             (self.hps.batch_size, self.hps.z_size), dtype=tf.float32)
       else:
